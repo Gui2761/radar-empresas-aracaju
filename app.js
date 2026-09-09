@@ -1,4 +1,4 @@
-﻿// Radar Aju — Controlador Client-Side (Somente Empresas Reais)
+// Radar Aju — Controlador Client-Side (Somente Empresas Reais)
 // Busca empresas REAIS via OpenStreetMap Nominatim + Overpass API
 
 let map = null;
@@ -165,7 +165,7 @@ async function searchNominatim(termo, nicho, tag, palette, limit) {
             website: website,
             google_rating: null,
             google_reviews_count: null,
-            maps_url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(nome + " " + bairro + " Aracaju Sergipe")}`,
+            maps_url: `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
             descricao: `${nome}, localizado no bairro ${bairro} em ${cidade} - SE.${openingHours ? " Horário: " + openingHours + "." : ""}`,
             pontos_fortes: `Estabelecimento real e ativo em ${bairro}, ${cidade}.`,
             oportunidade_digital: website
