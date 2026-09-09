@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
@@ -194,12 +194,26 @@
                     </div>
                 </div>
 
-                <div class="flex items-center justify-between text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                    <div class="flex items-center gap-1.5">
-                        <i data-lucide="smartphone" class="w-4 h-4 text-emerald-600"></i>
-                        <span>WhatsApp configurado: <strong id="outreach-target-wa" class="text-slate-800">-</strong></span>
+                <!-- Caixa de Contato / WhatsApp Editável -->
+                <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
+                    <div class="flex items-center justify-between">
+                        <label class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                            <i data-lucide="smartphone" class="w-4 h-4 text-emerald-600"></i>
+                            WhatsApp da Empresa (com DDD):
+                        </label>
+                        <span class="text-[11px] text-slate-500 font-medium">Texto limpo e profissional sem asteriscos</span>
                     </div>
-                    <span class="text-slate-400">Texto já formatado com negritos e emojis</span>
+                    <div class="flex items-center gap-2">
+                        <input id="input-custom-wa" type="text" placeholder="Ex: 79 99999-9999 ou 79 3243-5390" 
+                               class="flex-1 px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:border-emerald-500 outline-none text-slate-800 font-mono">
+                        <button id="btn-update-wa" onclick="updateOutreachWaNumber()" class="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-xs font-semibold rounded-lg transition whitespace-nowrap">
+                            Aplicar Número
+                        </button>
+                        <a id="btn-search-google-contact" href="#" target="_blank" class="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-semibold rounded-lg transition flex items-center gap-1 whitespace-nowrap" title="Pesquisar telefone/contato no Google">
+                            <i data-lucide="search" class="w-3.5 h-3.5"></i>
+                            Buscar Contato
+                        </a>
+                    </div>
                 </div>
             </div>
 
