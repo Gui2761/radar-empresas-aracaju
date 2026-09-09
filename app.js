@@ -1,5 +1,5 @@
-// Radar Aju — Controlador Client-Side Otimizado para GitHub Pages
-// Funciona 100% no navegador: Base Verificada Real + Busca ao Vivo
+// Radar Aju — Controlador 100% Real (Zero Dados Falsos)
+// GitHub Pages: Base Real Verificada + Busca ao Vivo
 
 let map = null;
 let markersLayer = null;
@@ -78,7 +78,6 @@ function applyFilters() {
 
     const all = [...liveSearchResults, ...EMPRESAS_VERIFICADAS];
 
-    // Eliminar duplicatas por ID ou nome+bairro
     const seen = new Set();
     const uniqueList = [];
     all.forEach(e => {
@@ -143,7 +142,7 @@ function setupEventListeners() {
 }
 
 // ==========================================
-// BUSCA AO VIVO NO OPENSTREETMAP
+// BUSCA AO VIVO (DADOS REAIS OSM)
 // ==========================================
 
 async function performLiveSearch() {
@@ -153,7 +152,7 @@ async function performLiveSearch() {
         return;
     }
 
-    showToast(`Buscando "${termo}" em Aracaju e região...`);
+    showToast(`Buscando "${termo}" em Aracaju...`);
     const btn = document.getElementById("btn-live-search");
     const originalHtml = btn.innerHTML;
     btn.innerHTML = `<i data-lucide="loader" class="w-3 h-3 animate-spin"></i> Buscando...`;
@@ -180,7 +179,7 @@ async function performLiveSearch() {
                 const lng = parseFloat(item.lon);
                 const extra = item.extratags || {};
                 
-                // Extração de contatos
+                // Extração estrita de contatos reais cadastrados
                 const phone = extra.phone || extra["contact:phone"] || "";
                 const cleanPhone = phone.replace(/\D/g, "");
                 let rawWa = "";
@@ -190,7 +189,6 @@ async function performLiveSearch() {
                 const website = extra.website || extra["contact:website"] || null;
                 const instagram = extra["contact:instagram"] || extra.instagram || "";
 
-                // Google Maps URL pesquisando exatamente pelo nome e bairro
                 const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(nome + " " + bairro + " Aracaju SE")}`;
 
                 return {
@@ -203,24 +201,23 @@ async function performLiveSearch() {
                     endereco: parts.slice(0, 3).join(", ") || `${nome} - ${bairro}, ${cidade} - SE`,
                     lat: lat,
                     lng: lng,
-                    telefone: phone,
-                    whatsapp: rawWa ? `+55 ${rawWa.slice(2,4)} ${rawWa.slice(4)}` : "",
+                    telefone: phone || null,
+                    whatsapp: null,
                     whatsapp_raw: rawWa,
-                    instagram: instagram,
+                    instagram: instagram || null,
                     website: website,
                     google_rating: null,
                     google_reviews_count: null,
                     maps_url: mapsUrl,
-                    descricao: `${nome}, localizado em ${bairro}, ${cidade} - SE. Identificado via busca cartográfica em tempo real.`,
-                    pontos_fortes: `Local físico em atividade em ${bairro}, ${cidade}.`,
+                    descricao: `${nome}, localizado em ${bairro}, ${cidade} - SE. Mapeado via OpenStreetMap.`,
+                    pontos_fortes: `Estabelecimento físico ativo em ${bairro}, ${cidade}.`,
                     oportunidade_digital: website
-                        ? "Já possui site. Oportunidade para modernização mobile e automação de atendimento."
-                        : "Sem site próprio identificado. Excelente potencial para Landing Page e destaque local.",
+                        ? "Possui site cadastrado. Oportunidade para melhoria mobile e captação direta."
+                        : "Sem site próprio cadastrado. Potencial para Landing Page profissional.",
                     stitch_palette: { primary: "#0D9488", secondary: "#14B8A6", accent: "#0F766E", bg: "#F0FDFA" }
                 };
             });
 
-            // Evitar duplicatas com base local ou resultados anteriores
             const existingKeys = new Set(liveSearchResults.map(e => (e.nome + "|" + e.bairro).toLowerCase()));
             const reallyNew = novos.filter(n => !existingKeys.has((n.nome + "|" + n.bairro).toLowerCase()));
             
@@ -230,11 +227,11 @@ async function performLiveSearch() {
 
             showToast(`${reallyNew.length} novos locais encontrados no mapa!`);
         } else {
-            showToast("Nenhum local novo encontrado para este termo.");
+            showToast("Nenhum local encontrado para este termo.");
         }
     } catch (e) {
         console.warn("Erro ao buscar:", e);
-        showToast("Não foi possível conectar ao mapa externo. Usando base local.");
+        showToast("Erro ao conectar ao mapa externo.");
     } finally {
         btn.innerHTML = originalHtml;
         btn.disabled = false;
@@ -249,14 +246,14 @@ async function performLiveSearch() {
 function renderLeadsList(empresas) {
     const container = document.getElementById("leads-container");
     const countLabel = document.getElementById("label-results-count");
-    countLabel.textContent = `${empresas.length} empresas`;
+    countLabel.textContent = `${empresas.length} empresas reais`;
 
     if (empresas.length === 0) {
         container.innerHTML = `
             <div class="flex flex-col items-center justify-center h-56 text-slate-400 text-center p-6">
                 <i data-lucide="search-x" class="w-10 h-10 text-slate-300 mb-2"></i>
                 <p class="text-sm font-semibold text-slate-600">Nenhuma empresa encontrada</p>
-                <p class="text-xs text-slate-400 mt-1">Tente ajustar os filtros ou busque pelo nome/ramo no campo de busca.</p>
+                <p class="text-xs text-slate-400 mt-1">Ajuste os filtros ou digite um termo no campo de busca.</p>
             </div>
         `;
         lucide.createIcons();
@@ -284,7 +281,7 @@ function renderLeadsList(empresas) {
                                 ${empresa.nicho}
                             </span>
                             ${!hasSite ? `
-                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 badge-pulse">
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
                                     🎯 Sem Site
                                 </span>
                             ` : ''}
@@ -314,7 +311,7 @@ function renderLeadsList(empresas) {
                     ${empresa.descricao}
                 </p>
 
-                <!-- Endereço e Telefone -->
+                <!-- Endereço e Telefone Real -->
                 <div class="mt-2 flex items-center gap-3 text-[11px] text-slate-600 flex-wrap">
                     ${hasPhone ? `
                         <span class="inline-flex items-center gap-1 text-slate-700 font-medium">
@@ -328,7 +325,7 @@ function renderLeadsList(empresas) {
                     </span>
                 </div>
 
-                <!-- Diagnóstico -->
+                <!-- Diagnóstico / Oportunidade -->
                 <div class="mt-2 text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 flex items-start gap-1.5">
                     <i data-lucide="lightbulb" class="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5"></i>
                     <span class="line-clamp-2"><strong>Diagnóstico:</strong> ${empresa.oportunidade_digital}</span>
@@ -345,8 +342,8 @@ function renderLeadsList(empresas) {
                                 WhatsApp
                             </a>
                         ` : hasPhone ? `
-                            <a href="tel:${empresa.telefone}" onclick="event.stopPropagation()"
-                               title="Ligar"
+                            <a href="tel:${empresa.telefone.replace(/\D/g, '')}" onclick="event.stopPropagation()"
+                               title="Ligar para ${empresa.telefone}"
                                class="flex items-center gap-1 text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-1 rounded-md font-semibold transition">
                                 <i data-lucide="phone" class="w-3.5 h-3.5 text-blue-600"></i>
                                 Ligar
@@ -362,7 +359,7 @@ function renderLeadsList(empresas) {
 
                         ${hasInsta ? `
                             <a href="https://instagram.com/${empresa.instagram.replace('@', '')}" target="_blank" onclick="event.stopPropagation()"
-                               title="Ver Instagram"
+                               title="Instagram: ${empresa.instagram}"
                                class="p-1 rounded-md text-slate-500 hover:text-pink-600 hover:bg-pink-50 border border-slate-200 transition">
                                 <i data-lucide="instagram" class="w-3.5 h-3.5"></i>
                             </a>
@@ -370,7 +367,7 @@ function renderLeadsList(empresas) {
 
                         ${hasSite ? `
                             <a href="${empresa.website}" target="_blank" onclick="event.stopPropagation()"
-                               title="Abrir Site"
+                               title="Site Oficial: ${empresa.website}"
                                class="p-1 rounded-md text-slate-500 hover:text-sky-600 hover:bg-sky-50 border border-slate-200 transition">
                                 <i data-lucide="globe" class="w-3.5 h-3.5"></i>
                             </a>
@@ -424,12 +421,14 @@ function renderMapMarkers(empresas) {
 
         const marker = L.marker([empresa.lat, empresa.lng], { icon: customIcon });
         const hasWa = Boolean(empresa.whatsapp_raw);
+        const hasPhone = Boolean(empresa.telefone);
 
         const popupContent = `
             <div class="p-1 max-w-[220px]">
                 <span class="text-[10px] font-bold text-slate-400 uppercase">${empresa.bairro}</span>
                 <h4 class="text-xs font-bold text-slate-900 leading-snug">${empresa.nome}</h4>
                 ${empresa.google_rating ? `<p class="text-[11px] text-amber-700 font-semibold my-1">★ ${empresa.google_rating} (${empresa.google_reviews_count} avaliações)</p>` : `<p class="text-[11px] text-slate-500 my-1">${empresa.nicho}</p>`}
+                ${hasPhone ? `<p class="text-[10px] text-slate-600 mt-1">📞 ${empresa.telefone}</p>` : ''}
                 <div class="flex items-center gap-1 mt-2 flex-wrap">
                     ${hasWa ? `
                         <a href="https://wa.me/${empresa.whatsapp_raw}" target="_blank" class="text-[10px] bg-emerald-600 text-white font-bold px-2 py-1 rounded">
@@ -514,11 +513,11 @@ function openOutreachModal(empresaId, event) {
 
     document.getElementById("modal-outreach-title").textContent = `Mensagens para: ${empresa.nome}`;
     
-    // Configurar input de WhatsApp editável
+    // Campo editável de WhatsApp: se já tiver, preenche; senão fica em branco para o usuário colar
     const inputWa = document.getElementById("input-custom-wa");
-    inputWa.value = empresa.whatsapp_raw || empresa.telefone || "";
+    inputWa.value = empresa.whatsapp_raw || "";
 
-    // Configurar botão de busca no Google
+    // Botão de busca rápida no Google caso precise achar o WhatsApp
     const btnSearchGoogle = document.getElementById("btn-search-google-contact");
     btnSearchGoogle.href = `https://www.google.com/search?q=${encodeURIComponent(empresa.nome + " " + empresa.bairro + " Aracaju telefone whatsapp")}`;
 
@@ -542,14 +541,13 @@ function updateOutreachWaNumber() {
 
     currentOutreachData.whatsapp_raw = finalRaw;
 
-    // Atualiza links das mensagens
     currentOutreachData.mensagens.forEach(m => {
         const encoded = encodeURIComponent(m.texto);
         m.wa_link = finalRaw ? `https://wa.me/${finalRaw}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
     });
 
     selectOutreachTab(currentSelectedTabIndex);
-    showToast("Número de WhatsApp aplicado ao botão de envio!");
+    showToast("Número de WhatsApp aplicado com sucesso!");
 }
 
 function selectOutreachTab(index) {
@@ -561,7 +559,14 @@ function selectOutreachTab(index) {
     document.getElementById("current-pitch-text").textContent = msg.texto;
 
     const btnWa = document.getElementById("btn-open-wa-direct");
-    btnWa.href = msg.wa_link;
+    if (currentOutreachData.whatsapp_raw) {
+        btnWa.href = msg.wa_link;
+        btnWa.classList.remove("opacity-50", "pointer-events-none");
+        btnWa.innerHTML = `<i data-lucide="send" class="w-4 h-4"></i> Enviar no WhatsApp Agora`;
+    } else {
+        btnWa.href = `https://www.google.com/search?q=${encodeURIComponent(currentOutreachData.empresa_nome + " Aracaju whatsapp")}`;
+        btnWa.innerHTML = `<i data-lucide="search" class="w-4 h-4"></i> Buscar WhatsApp no Google`;
+    }
 
     const tabs = document.querySelectorAll("#outreach-tabs .tab-btn");
     tabs.forEach((tab, idx) => {
@@ -569,6 +574,7 @@ function selectOutreachTab(index) {
             ? "tab-btn font-semibold px-3 py-1.5 rounded-lg transition bg-emerald-600 text-white shadow-xs"
             : "tab-btn font-semibold px-3 py-1.5 rounded-lg transition bg-slate-100 text-slate-700 hover:bg-slate-200";
     });
+    lucide.createIcons();
 }
 
 function closeOutreachModal() {
@@ -594,7 +600,7 @@ function openStitchModal(empresaId, event) {
     currentStitchPrompt = spec.stitch_prompt;
 
     document.getElementById("stitch-prompt-content").value = currentStitchPrompt;
-    document.getElementById("modal-stitch-subtitle").textContent = `Especificação pronta para: ${empresa.nome} (${empresa.bairro})`;
+    document.getElementById("modal-stitch-subtitle").textContent = `Especificação para: ${empresa.nome} (${empresa.bairro})`;
 
     const p = spec.palette;
     document.getElementById("stitch-palette-chips").innerHTML = `
