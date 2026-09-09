@@ -1,13 +1,30 @@
-﻿// Radar Aju — Controlador Client-Side para GitHub Pages
-// 100% autônomo, sem backend
+﻿// Radar Aju — Controlador Client-Side (Somente Empresas Reais)
+// Busca empresas REAIS via OpenStreetMap Nominatim + Overpass API
 
 let map = null;
 let markersLayer = null;
 let currentEmpresas = [];
-let liveSearchResults = []; // Resultados da busca ao vivo persistidos
+let allFoundEmpresas = []; // Todas as empresas reais encontradas
 let activeEmpresaId = null;
 let currentOutreachData = null;
 let currentStitchPrompt = "";
+let isLoading = false;
+
+// Categorias que serão buscadas automaticamente ao abrir
+const AUTO_SEARCH_CATEGORIES = [
+    { termo: "restaurante", nicho: "Gastronomia & Restaurantes", tag: "gastronomia", palette: { primary: "#EA580C", secondary: "#F97316", accent: "#C2410C", bg: "#FFF7ED" } },
+    { termo: "clínica", nicho: "Saúde & Clínicas", tag: "clinica", palette: { primary: "#0D9488", secondary: "#14B8A6", accent: "#0F766E", bg: "#F0FDFA" } },
+    { termo: "academia", nicho: "Academias & Fitness", tag: "fitness", palette: { primary: "#DC2626", secondary: "#EF4444", accent: "#171717", bg: "#FEF2F2" } },
+    { termo: "pet shop", nicho: "Pet Shops & Veterinárias", tag: "pet", palette: { primary: "#059669", secondary: "#10B981", accent: "#F59E0B", bg: "#ECFDF5" } },
+    { termo: "advocacia escritório", nicho: "Advocacia & Jurídico", tag: "advocacia", palette: { primary: "#1E293B", secondary: "#334155", accent: "#D97706", bg: "#F8FAFC" } },
+    { termo: "imobiliária", nicho: "Imobiliárias", tag: "imobiliaria", palette: { primary: "#0369A1", secondary: "#0284C7", accent: "#F59E0B", bg: "#F0F9FF" } },
+    { termo: "salão beleza estética", nicho: "Estética & Beleza", tag: "estetica", palette: { primary: "#DB2777", secondary: "#EC4899", accent: "#831843", bg: "#FDF2F8" } },
+    { termo: "oficina mecânica", nicho: "Serviços Automotivos", tag: "automotivo", palette: { primary: "#2563EB", secondary: "#3B82F6", accent: "#1E40AF", bg: "#EFF6FF" } },
+    { termo: "escola curso", nicho: "Escolas & Educação", tag: "educacao", palette: { primary: "#4F46E5", secondary: "#6366F1", accent: "#4338CA", bg: "#EEF2FF" } },
+    { termo: "loja moda roupa", nicho: "Varejo & Moda", tag: "varejo", palette: { primary: "#7C3AED", secondary: "#8B5CF6", accent: "#6D28D9", bg: "#F5F3FF" } },
+    { termo: "dentista odontológica", nicho: "Odontologia", tag: "clinica", palette: { primary: "#0284C7", secondary: "#38BDF8", accent: "#0369A1", bg: "#F0F9FF" } },
+    { termo: "farmácia", nicho: "Farmácias", tag: "clinica", palette: { primary: "#16A34A", secondary: "#22C55E", accent: "#15803D", bg: "#F0FDF4" } },
+];
 
 const CATEGORY_PINS = {
     clinica: { class: "pin-clinica" },
@@ -26,10 +43,9 @@ const CATEGORY_PINS = {
 
 document.addEventListener("DOMContentLoaded", () => {
     initMap();
-    populateFilters();
-    applyFilters();
     setupEventListeners();
     lucide.createIcons();
+    autoLoadRealEmpresas();
 });
 
 // ==========================================
@@ -50,14 +66,137 @@ function initMap() {
 }
 
 // ==========================================
-// FILTROS E BUSCA PRINCIPAL
+// CARREGAMENTO AUTOMÁTICO DE EMPRESAS REAIS
 // ==========================================
 
-function populateFilters() {
-    const bairros = getLocalBairros();
+async function autoLoadRealEmpresas() {
+    const container = document.getElementById("leads-container");
+    container.innerHTML = `
+        <div class="flex flex-col items-center justify-center h-56 text-slate-400 text-center p-6">
+            <i data-lucide="loader" class="w-8 h-8 animate-spin mb-3 text-brand-600"></i>
+            <p class="text-sm font-semibold text-slate-700">Buscando empresas reais em Aracaju...</p>
+            <p class="text-xs text-slate-400 mt-1" id="loading-status">Conectando ao OpenStreetMap...</p>
+        </div>
+    `;
+    lucide.createIcons();
+
+    isLoading = true;
+    let totalFound = 0;
+
+    for (let i = 0; i < AUTO_SEARCH_CATEGORIES.length; i++) {
+        const cat = AUTO_SEARCH_CATEGORIES[i];
+        const statusEl = document.getElementById("loading-status");
+        if (statusEl) {
+            statusEl.textContent = `Buscando ${cat.nicho} (${i + 1}/${AUTO_SEARCH_CATEGORIES.length})...`;
+        }
+
+        try {
+            const results = await searchNominatim(cat.termo, cat.nicho, cat.tag, cat.palette, 8);
+            
+            // Adiciona sem duplicatas (por nome + bairro)
+            const existingKeys = new Set(allFoundEmpresas.map(e => (e.nome + e.bairro).toLowerCase()));
+            const novos = results.filter(r => !existingKeys.has((r.nome + r.bairro).toLowerCase()));
+            allFoundEmpresas = [...allFoundEmpresas, ...novos];
+            totalFound += novos.length;
+
+        } catch (e) {
+            console.warn(`Erro ao buscar ${cat.termo}:`, e);
+        }
+
+        // Respeitar rate limit do Nominatim (1 req/s)
+        await sleep(1100);
+    }
+
+    isLoading = false;
+
+    // Popular filtros com dados reais encontrados
+    populateFiltersFromData();
+    applyFilters();
+
+    if (totalFound > 0) {
+        showToast(`${totalFound} empresas reais de Aracaju carregadas no radar!`);
+    } else {
+        showToast("Não foi possível carregar empresas. Use a busca manual.");
+    }
+}
+
+async function searchNominatim(termo, nicho, tag, palette, limit) {
+    const queryUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(termo + ", Aracaju, Sergipe")}&format=json&addressdetails=1&extratags=1&limit=${limit}`;
+    
+    const res = await fetch(queryUrl, {
+        headers: { "Accept-Language": "pt-BR" }
+    });
+
+    if (!res.ok) throw new Error("HTTP " + res.status);
+
+    const data = await res.json();
+    if (!data || data.length === 0) return [];
+
+    return data.map((item, idx) => {
+        const parts = (item.display_name || "").split(",").map(p => p.trim());
+        const nome = parts[0] || termo;
+        const addr = item.address || {};
+        const bairro = addr.suburb || addr.neighbourhood || addr.quarter || addr.city_district || "Aracaju";
+        const cidade = addr.city || addr.town || addr.municipality || "Aracaju";
+        const lat = parseFloat(item.lat);
+        const lng = parseFloat(item.lon);
+        const extra = item.extratags || {};
+        const phone = extra.phone || extra["contact:phone"] || "";
+        const cleanPhone = phone.replace(/\D/g, "");
+        const rawWa = cleanPhone.length >= 10 ? "55" + cleanPhone : "";
+        const website = extra.website || extra["contact:website"] || null;
+        const instagram = extra["contact:instagram"] || "";
+        const openingHours = extra.opening_hours || "";
+
+        return {
+            id: `real-${tag}-${idx}-${Date.now() % 100000}`,
+            nome: nome,
+            nicho: nicho,
+            categoria_tag: tag,
+            bairro: bairro,
+            cidade: cidade,
+            endereco: parts.slice(0, 3).join(", ") || `${nome} - ${bairro}, ${cidade} - SE`,
+            lat: lat,
+            lng: lng,
+            telefone: phone || "Ver no Google Maps",
+            whatsapp: rawWa ? `+${rawWa.slice(0,2)} ${rawWa.slice(2,4)} ${rawWa.slice(4,9)}-${rawWa.slice(9)}` : "",
+            whatsapp_raw: rawWa,
+            instagram: instagram ? `@${instagram}` : "",
+            website: website,
+            google_rating: null,
+            google_reviews_count: null,
+            maps_url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(nome + " " + bairro + " Aracaju Sergipe")}`,
+            descricao: `${nome}, localizado no bairro ${bairro} em ${cidade} - SE.${openingHours ? " Horário: " + openingHours + "." : ""}`,
+            pontos_fortes: `Estabelecimento real e ativo em ${bairro}, ${cidade}.`,
+            oportunidade_digital: website
+                ? "Já possui site. Oportunidade para otimização mobile, SEO local e integração com WhatsApp Business."
+                : "Sem site identificado. Excelente oportunidade para Landing Page, Google Meu Negócio e captação via WhatsApp.",
+            stitch_palette: palette
+        };
+    });
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ==========================================
+// FILTROS
+// ==========================================
+
+function populateFiltersFromData() {
+    const bairros = ["Todos", ...new Set(allFoundEmpresas.map(e => e.bairro))].sort((a, b) => {
+        if (a === "Todos") return -1;
+        if (b === "Todos") return 1;
+        return a.localeCompare(b, "pt-BR");
+    });
     document.getElementById("select-bairro").innerHTML = bairros.map(b => `<option value="${b}">${b}</option>`).join("");
 
-    const nichos = getLocalNichos();
+    const nichos = ["Todos", ...new Set(allFoundEmpresas.map(e => e.nicho))].sort((a, b) => {
+        if (a === "Todos") return -1;
+        if (b === "Todos") return 1;
+        return a.localeCompare(b, "pt-BR");
+    });
     document.getElementById("select-nicho").innerHTML = nichos.map(n => `<option value="${n}">${n}</option>`).join("");
 }
 
@@ -65,33 +204,23 @@ function applyFilters() {
     const nicho = document.getElementById("select-nicho").value;
     const bairro = document.getElementById("select-bairro").value;
     const semSite = document.getElementById("check-no-site").checked;
-    const query = document.getElementById("input-search").value;
+    const query = document.getElementById("input-search").value.toLowerCase().trim();
 
-    // Filtrar base local
-    let localResults = filterLocalEmpresas(nicho, bairro, semSite, query);
-
-    // Filtrar também os resultados ao vivo com os mesmos critérios
-    let liveFiltered = liveSearchResults.filter(e => {
-        if (nicho && nicho !== "Todos" && e.nicho.toLowerCase() !== nicho.toLowerCase()) return false;
-        if (bairro && bairro !== "Todos" && e.bairro.toLowerCase() !== bairro.toLowerCase()) return false;
+    currentEmpresas = allFoundEmpresas.filter(e => {
+        if (nicho && nicho !== "Todos" && e.nicho !== nicho) return false;
+        if (bairro && bairro !== "Todos" && e.bairro !== bairro) return false;
         if (semSite && e.website) return false;
         if (query) {
-            const q = query.toLowerCase().trim();
             if (!(
-                e.nome.toLowerCase().includes(q) ||
-                e.nicho.toLowerCase().includes(q) ||
-                e.bairro.toLowerCase().includes(q) ||
-                e.cidade.toLowerCase().includes(q) ||
-                e.descricao.toLowerCase().includes(q)
+                e.nome.toLowerCase().includes(query) ||
+                e.nicho.toLowerCase().includes(query) ||
+                e.bairro.toLowerCase().includes(query) ||
+                e.cidade.toLowerCase().includes(query) ||
+                e.descricao.toLowerCase().includes(query)
             )) return false;
         }
         return true;
     });
-
-    // Junta: resultados ao vivo primeiro, depois base local (sem duplicatas por nome)
-    const localNames = new Set(localResults.map(e => e.nome.toLowerCase()));
-    const uniqueLive = liveFiltered.filter(e => !localNames.has(e.nome.toLowerCase()));
-    currentEmpresas = [...uniqueLive, ...localResults];
 
     renderLeadsList(currentEmpresas);
     renderMapMarkers(currentEmpresas);
@@ -109,7 +238,6 @@ function setupEventListeners() {
         debounceTimer = setTimeout(applyFilters, 300);
     });
 
-    // Enter no campo de busca também dispara a busca ao vivo
     document.getElementById("input-search").addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
             e.preventDefault();
@@ -121,26 +249,31 @@ function setupEventListeners() {
 
     document.getElementById("btn-export-csv").addEventListener("click", () => {
         if (currentEmpresas.length === 0) {
-            showToast("Nenhuma empresa para exportar. Ajuste os filtros.");
+            showToast("Nenhuma empresa para exportar.");
             return;
         }
         exportLeadsToCSVClient(currentEmpresas);
-        showToast("Planilha CSV gerada e baixada com sucesso!");
+        showToast("Planilha CSV baixada com sucesso!");
     });
 }
 
 // ==========================================
-// BUSCA AO VIVO — OPENSTREETMAP NOMINATIM
+// BUSCA AO VIVO MANUAL
 // ==========================================
 
 async function performLiveSearch() {
     const termo = document.getElementById("input-search").value.trim();
     if (!termo) {
-        showToast("Digite um termo para pesquisar em Aracaju!");
+        showToast("Digite o que procurar: nome, ramo ou tipo de empresa.");
         return;
     }
 
-    showToast(`Buscando "${termo}" ao vivo no mapa de Aracaju...`);
+    if (isLoading) {
+        showToast("Aguarde o carregamento inicial terminar...");
+        return;
+    }
+
+    showToast(`Buscando "${termo}" em Aracaju...`);
     const btn = document.getElementById("btn-live-search");
     const originalHtml = btn.innerHTML;
     btn.innerHTML = `<i data-lucide="loader" class="w-3 h-3 animate-spin"></i> Buscando...`;
@@ -148,73 +281,33 @@ async function performLiveSearch() {
     lucide.createIcons();
 
     try {
-        const queryUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(termo + ", Aracaju, Sergipe")}&format=json&addressdetails=1&extratags=1&limit=10`;
-        const res = await fetch(queryUrl, {
-            headers: { "Accept-Language": "pt-BR" }
-        });
+        const results = await searchNominatim(
+            termo,
+            termo.charAt(0).toUpperCase() + termo.slice(1),
+            "live_search",
+            { primary: "#0D9488", secondary: "#14B8A6", accent: "#0F766E", bg: "#F0FDFA" },
+            12
+        );
 
-        if (!res.ok) throw new Error("Nominatim retornou erro " + res.status);
+        if (results.length > 0) {
+            const existingKeys = new Set(allFoundEmpresas.map(e => (e.nome + e.bairro).toLowerCase()));
+            const novos = results.filter(r => !existingKeys.has((r.nome + r.bairro).toLowerCase()));
+            allFoundEmpresas = [...novos, ...allFoundEmpresas];
 
-        const data = await res.json();
-
-        if (data && data.length > 0) {
-            const novos = data.map((item, idx) => {
-                const parts = (item.display_name || "").split(",").map(p => p.trim());
-                const nome = parts[0] || termo;
-                const addr = item.address || {};
-                const bairro = addr.suburb || addr.neighbourhood || addr.quarter || addr.city_district || "Aracaju";
-                const cidade = addr.city || addr.town || addr.municipality || "Aracaju";
-                const lat = parseFloat(item.lat);
-                const lng = parseFloat(item.lon);
-                const extra = item.extratags || {};
-                const phone = extra.phone || extra["contact:phone"] || "";
-                const cleanPhone = phone.replace(/\D/g, "");
-                const rawWa = cleanPhone.length >= 10 ? "55" + cleanPhone : "";
-                const website = extra.website || extra["contact:website"] || null;
-                const instagram = extra["contact:instagram"] || "";
-
-                return {
-                    id: `live-${idx + 1}-${Date.now() % 100000}`,
-                    nome: nome,
-                    nicho: termo.charAt(0).toUpperCase() + termo.slice(1),
-                    categoria_tag: "live_search",
-                    bairro: bairro,
-                    cidade: cidade,
-                    endereco: `${nome} - ${bairro}, ${cidade} - SE`,
-                    lat: lat,
-                    lng: lng,
-                    telefone: phone || "Não encontrado",
-                    whatsapp: rawWa ? `+55 ${rawWa.slice(2,4)} ${rawWa.slice(4,9)}-${rawWa.slice(9)}` : "Não disponível",
-                    whatsapp_raw: rawWa || "",
-                    instagram: instagram ? `@${instagram}` : "",
-                    website: website,
-                    google_rating: parseFloat((4.0 + Math.random() * 0.9).toFixed(1)),
-                    google_reviews_count: Math.floor(20 + Math.random() * 100),
-                    maps_url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(nome + " " + bairro + " Aracaju")}`,
-                    descricao: `${nome}, localizado no bairro ${bairro} em ${cidade}. Encontrado via busca geoespacial em tempo real no OpenStreetMap.`,
-                    pontos_fortes: `Ponto físico em operação em ${bairro}, ${cidade}.`,
-                    oportunidade_digital: website
-                        ? "Já possui site. Oportunidade para otimização mobile e integração com WhatsApp."
-                        : "Sem site identificado. Excelente oportunidade para Landing Page de captação e presença no Google Meu Negócio.",
-                    stitch_palette: { primary: "#0D9488", secondary: "#14B8A6", accent: "#0F766E", bg: "#F0FDFA" }
-                };
-            });
-
-            // Adiciona ao array persistente de resultados ao vivo (evitando duplicatas por nome)
-            const existingNames = new Set(liveSearchResults.map(e => e.nome.toLowerCase()));
-            const reallyNew = novos.filter(n => !existingNames.has(n.nome.toLowerCase()));
-            liveSearchResults = [...reallyNew, ...liveSearchResults];
-
-            // Reaplica filtros para combinar base local + ao vivo
+            populateFiltersFromData();
+            
+            // Resetar filtros para mostrar resultados novos
+            document.getElementById("select-nicho").value = "Todos";
+            document.getElementById("select-bairro").value = "Todos";
             applyFilters();
 
-            showToast(`${reallyNew.length} novos locais encontrados e adicionados ao radar!`);
+            showToast(`${novos.length} novos locais reais adicionados ao radar!`);
         } else {
-            showToast("Nenhum local encontrado para esse termo. Tente outro nome ou ramo.");
+            showToast("Nenhum resultado para esse termo. Tente outro nome.");
         }
     } catch (e) {
-        console.warn("Erro ao buscar no Nominatim:", e);
-        showToast("Não foi possível conectar ao mapa externo. Verifique sua conexão.");
+        console.warn("Erro na busca:", e);
+        showToast("Erro de conexão. Verifique sua internet.");
     } finally {
         btn.innerHTML = originalHtml;
         btn.disabled = false;
@@ -223,7 +316,7 @@ async function performLiveSearch() {
 }
 
 // ==========================================
-// RENDERIZAÇÃO DA LISTA DE CARDS
+// RENDERIZAÇÃO DOS CARDS
 // ==========================================
 
 function renderLeadsList(empresas) {
@@ -231,12 +324,12 @@ function renderLeadsList(empresas) {
     const countLabel = document.getElementById("label-results-count");
     countLabel.textContent = `${empresas.length} empresas`;
 
-    if (empresas.length === 0) {
+    if (empresas.length === 0 && !isLoading) {
         container.innerHTML = `
             <div class="flex flex-col items-center justify-center h-56 text-slate-400 text-center p-6">
                 <i data-lucide="search-x" class="w-10 h-10 text-slate-300 mb-2"></i>
                 <p class="text-sm font-semibold text-slate-600">Nenhuma empresa encontrada</p>
-                <p class="text-xs text-slate-400 mt-1">Tente ajustar os filtros ou use a busca ao vivo no mapa.</p>
+                <p class="text-xs text-slate-400 mt-1">Tente ajustar os filtros ou busque um ramo específico (ex: "padaria", "dentista").</p>
             </div>
         `;
         lucide.createIcons();
@@ -246,7 +339,7 @@ function renderLeadsList(empresas) {
     container.innerHTML = empresas.map(empresa => {
         const hasSite = Boolean(empresa.website);
         const hasWa = Boolean(empresa.whatsapp_raw);
-        const isLive = empresa.categoria_tag === "live_search";
+        const hasRating = empresa.google_rating !== null;
 
         return `
             <div id="card-${empresa.id}" onclick="focusEmpresa('${empresa.id}')" 
@@ -266,22 +359,18 @@ function renderLeadsList(empresas) {
                                     🎯 Sem Site
                                 </span>
                             ` : ''}
-                            ${isLive ? `
-                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-violet-100 text-violet-800 border border-violet-300">
-                                    🔍 Busca ao vivo
-                                </span>
-                            ` : ''}
                         </div>
                         <h3 class="text-sm font-bold text-slate-900 group-hover:text-brand-600 transition">
                             ${empresa.nome}
                         </h3>
                     </div>
 
-                    <div class="flex items-center gap-1 bg-amber-50 text-amber-900 border border-amber-200/70 px-2 py-1 rounded-lg text-xs font-bold shrink-0">
-                        <i data-lucide="star" class="w-3.5 h-3.5 fill-amber-400 text-amber-500"></i>
-                        <span>${empresa.google_rating}</span>
-                        <span class="text-[10px] text-amber-600 font-normal">(${empresa.google_reviews_count})</span>
-                    </div>
+                    <a href="${empresa.maps_url}" target="_blank" onclick="event.stopPropagation()"
+                       class="flex items-center gap-1 bg-sky-50 text-sky-700 border border-sky-200/70 px-2 py-1 rounded-lg text-xs font-bold shrink-0 hover:bg-sky-100 transition"
+                       title="Ver no Google Maps">
+                        <i data-lucide="map-pin" class="w-3.5 h-3.5 text-sky-600"></i>
+                        Maps
+                    </a>
                 </div>
 
                 <p class="text-xs text-slate-500 mt-2 line-clamp-2 leading-relaxed">
@@ -305,21 +394,23 @@ function renderLeadsList(empresas) {
                         ` : `
                             <span class="flex items-center gap-1 text-slate-400 bg-slate-50 border border-slate-200 px-2 py-1 rounded-md text-[10px]">
                                 <i data-lucide="phone-off" class="w-3 h-3"></i>
-                                Sem WhatsApp
+                                Verificar no Maps
                             </span>
                         `}
-
-                        <a href="${empresa.maps_url}" target="_blank" onclick="event.stopPropagation()"
-                           title="Abrir no Google Maps"
-                           class="p-1 rounded-md text-slate-500 hover:text-sky-600 hover:bg-sky-50 border border-slate-200 transition">
-                            <i data-lucide="map" class="w-3.5 h-3.5"></i>
-                        </a>
 
                         ${empresa.instagram ? `
                             <a href="https://instagram.com/${empresa.instagram.replace('@', '')}" target="_blank" onclick="event.stopPropagation()"
                                title="Ver Instagram"
                                class="p-1 rounded-md text-slate-500 hover:text-pink-600 hover:bg-pink-50 border border-slate-200 transition">
                                 <i data-lucide="instagram" class="w-3.5 h-3.5"></i>
+                            </a>
+                        ` : ''}
+
+                        ${hasSite ? `
+                            <a href="${empresa.website}" target="_blank" onclick="event.stopPropagation()"
+                               title="Abrir site"
+                               class="p-1 rounded-md text-slate-500 hover:text-brand-600 hover:bg-brand-50 border border-slate-200 transition">
+                                <i data-lucide="globe" class="w-3.5 h-3.5"></i>
                             </a>
                         ` : ''}
                     </div>
@@ -338,7 +429,6 @@ function renderLeadsList(empresas) {
                         </button>
                     </div>
                 </div>
-
             </div>
         `;
     }).join("");
@@ -347,7 +437,7 @@ function renderLeadsList(empresas) {
 }
 
 // ==========================================
-// RENDERIZAÇÃO DO MAPA
+// MAPA — MARCADORES
 // ==========================================
 
 function renderMapMarkers(empresas) {
@@ -370,22 +460,18 @@ function renderMapMarkers(empresas) {
         });
 
         const marker = L.marker([empresa.lat, empresa.lng], { icon: customIcon });
-
         const hasWa = Boolean(empresa.whatsapp_raw);
+
         const popupContent = `
             <div class="p-1 max-w-[220px]">
                 <span class="text-[10px] font-bold text-slate-400 uppercase">${empresa.bairro}</span>
                 <h4 class="text-xs font-bold text-slate-900 leading-snug">${empresa.nome}</h4>
-                <p class="text-[11px] text-amber-700 font-semibold my-1">★ ${empresa.google_rating} (${empresa.google_reviews_count} avaliações)</p>
+                <p class="text-[11px] text-slate-500 my-1">${empresa.nicho}</p>
                 <div class="flex items-center gap-1 mt-2 flex-wrap">
                     ${hasWa ? `
-                        <a href="https://wa.me/${empresa.whatsapp_raw}" target="_blank" class="text-[10px] bg-emerald-600 text-white font-bold px-2 py-1 rounded">
-                            WhatsApp
-                        </a>
+                        <a href="https://wa.me/${empresa.whatsapp_raw}" target="_blank" class="text-[10px] bg-emerald-600 text-white font-bold px-2 py-1 rounded">WhatsApp</a>
                     ` : ''}
-                    <a href="${empresa.maps_url}" target="_blank" class="text-[10px] bg-slate-100 text-slate-700 border border-slate-200 font-semibold px-2 py-1 rounded">
-                        Google Maps
-                    </a>
+                    <a href="${empresa.maps_url}" target="_blank" class="text-[10px] bg-slate-100 text-slate-700 border border-slate-200 font-semibold px-2 py-1 rounded">Google Maps</a>
                 </div>
             </div>
         `;
@@ -409,15 +495,12 @@ function renderMapMarkers(empresas) {
 function focusEmpresa(empresaId) {
     const empresa = currentEmpresas.find(e => e.id === empresaId);
     if (!empresa) return;
-
     highlightCard(empresaId);
-
     if (empresa.lat && empresa.lng) {
         map.flyTo([empresa.lat, empresa.lng], 16, { animate: true, duration: 1 });
-        
         markersLayer.eachLayer(layer => {
-            const latLng = layer.getLatLng();
-            if (Math.abs(latLng.lat - empresa.lat) < 0.0001 && Math.abs(latLng.lng - empresa.lng) < 0.0001) {
+            const ll = layer.getLatLng();
+            if (Math.abs(ll.lat - empresa.lat) < 0.0001 && Math.abs(ll.lng - empresa.lng) < 0.0001) {
                 layer.openPopup();
             }
         });
@@ -425,10 +508,7 @@ function focusEmpresa(empresaId) {
 }
 
 function highlightCard(empresaId) {
-    document.querySelectorAll('[id^="card-"]').forEach(c => {
-        c.classList.remove("ring-2", "ring-brand-500", "bg-brand-50/40");
-    });
-
+    document.querySelectorAll('[id^="card-"]').forEach(c => c.classList.remove("ring-2", "ring-brand-500", "bg-brand-50/40"));
     const card = document.getElementById(`card-${empresaId}`);
     if (card) {
         card.classList.add("ring-2", "ring-brand-500", "bg-brand-50/40");
@@ -442,25 +522,17 @@ function updateCounters(empresas) {
 }
 
 // ==========================================
-// MODAL DE MENSAGENS (OUTREACH)
+// MODAIS — OUTREACH & STITCH
 // ==========================================
 
 function openOutreachModal(empresaId, event) {
     if (event) event.stopPropagation();
-
-    const empresa = currentEmpresas.find(e => e.id === empresaId) || getEmpresaById(empresaId);
+    const empresa = currentEmpresas.find(e => e.id === empresaId);
     if (!empresa) return;
-
     const msgs = generateOutreachMessagesClient(empresa);
-    currentOutreachData = {
-        empresa_nome: empresa.nome,
-        whatsapp: empresa.whatsapp,
-        mensagens: msgs
-    };
-
+    currentOutreachData = { empresa_nome: empresa.nome, whatsapp: empresa.whatsapp, mensagens: msgs };
     document.getElementById("modal-outreach-title").textContent = `Mensagens para: ${empresa.nome}`;
-    document.getElementById("outreach-target-wa").textContent = empresa.whatsapp || "Não informado";
-
+    document.getElementById("outreach-target-wa").textContent = empresa.whatsapp || "Não encontrado — verifique no Google Maps";
     selectOutreachTab(0);
     document.getElementById("modal-outreach").classList.remove("hidden");
     lucide.createIcons();
@@ -468,68 +540,42 @@ function openOutreachModal(empresaId, event) {
 
 function selectOutreachTab(index) {
     if (!currentOutreachData || !currentOutreachData.mensagens[index]) return;
-
     const msg = currentOutreachData.mensagens[index];
     document.getElementById("current-pitch-title").textContent = msg.titulo;
     document.getElementById("current-pitch-text").textContent = msg.texto;
-
-    const btnWa = document.getElementById("btn-open-wa-direct");
-    btnWa.href = msg.wa_link;
-
-    const tabs = document.querySelectorAll("#outreach-tabs .tab-btn");
-    tabs.forEach((tab, idx) => {
+    document.getElementById("btn-open-wa-direct").href = msg.wa_link;
+    document.querySelectorAll("#outreach-tabs .tab-btn").forEach((tab, idx) => {
         tab.className = idx === index
             ? "tab-btn font-semibold px-3 py-1.5 rounded-lg transition bg-emerald-600 text-white shadow-xs"
             : "tab-btn font-semibold px-3 py-1.5 rounded-lg transition bg-slate-100 text-slate-700 hover:bg-slate-200";
     });
 }
 
-function closeOutreachModal() {
-    document.getElementById("modal-outreach").classList.add("hidden");
-}
-
+function closeOutreachModal() { document.getElementById("modal-outreach").classList.add("hidden"); }
 function copyOutreachText() {
-    const text = document.getElementById("current-pitch-text").textContent;
-    navigator.clipboard.writeText(text).then(() => showToast("Mensagem copiada para a área de transferência!"));
+    navigator.clipboard.writeText(document.getElementById("current-pitch-text").textContent)
+        .then(() => showToast("Mensagem copiada!"));
 }
-
-// ==========================================
-// MODAL GOOGLE STITCH SPEC
-// ==========================================
 
 function openStitchModal(empresaId, event) {
     if (event) event.stopPropagation();
-
-    const empresa = currentEmpresas.find(e => e.id === empresaId) || getEmpresaById(empresaId);
+    const empresa = currentEmpresas.find(e => e.id === empresaId);
     if (!empresa) return;
-
     const spec = generateStitchPromptClient(empresa);
     currentStitchPrompt = spec.stitch_prompt;
-
     document.getElementById("stitch-prompt-content").value = currentStitchPrompt;
-    document.getElementById("modal-stitch-subtitle").textContent = `Especificação pronta para: ${empresa.nome} (${empresa.bairro})`;
-
+    document.getElementById("modal-stitch-subtitle").textContent = `Especificação para: ${empresa.nome} (${empresa.bairro})`;
     const p = spec.palette;
     document.getElementById("stitch-palette-chips").innerHTML = `
-        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 text-[10px] font-mono" style="background-color: ${p.primary}; color: white;">
-            Primária ${p.primary}
-        </span>
-        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 text-[10px] font-mono" style="background-color: ${p.secondary}; color: white;">
-            Secundária ${p.secondary}
-        </span>
-        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 text-[10px] font-mono" style="background-color: ${p.accent}; color: white;">
-            Destaque ${p.accent}
-        </span>
+        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 text-[10px] font-mono" style="background-color:${p.primary};color:white;">Primária ${p.primary}</span>
+        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 text-[10px] font-mono" style="background-color:${p.secondary};color:white;">Secundária ${p.secondary}</span>
+        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 text-[10px] font-mono" style="background-color:${p.accent};color:white;">Destaque ${p.accent}</span>
     `;
-
     document.getElementById("modal-stitch").classList.remove("hidden");
     lucide.createIcons();
 }
 
-function closeStitchModal() {
-    document.getElementById("modal-stitch").classList.add("hidden");
-}
-
+function closeStitchModal() { document.getElementById("modal-stitch").classList.add("hidden"); }
 function copyStitchPrompt() {
     if (!currentStitchPrompt) return;
     navigator.clipboard.writeText(currentStitchPrompt).then(() => showToast("Prompt do Google Stitch copiado!"));
@@ -542,10 +588,8 @@ function copyStitchPrompt() {
 function showToast(message) {
     const toast = document.getElementById("toast");
     document.getElementById("toast-message").textContent = message;
-
     toast.classList.remove("translate-y-20", "opacity-0", "pointer-events-none");
     toast.classList.add("translate-y-0", "opacity-100");
-
     setTimeout(() => {
         toast.classList.add("translate-y-20", "opacity-0", "pointer-events-none");
         toast.classList.remove("translate-y-0", "opacity-100");
